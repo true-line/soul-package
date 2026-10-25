@@ -1,0 +1,3 @@
+# Contract-adjacent code goes through the WP1 integrator; the rest through the portability implementer.
+/spec/   @true-line/contracts-maintainers
+*        @true-line/package-maintainers
