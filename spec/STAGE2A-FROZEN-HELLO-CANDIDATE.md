@@ -127,8 +127,12 @@ output inside a private runner directory. Its private runner outputs are
 deleted when the job exits. The build stores the Statement and diagnostic
 inputs alongside the exact archive, without storing private bytes in logs.
 
-A separate `release_gate` job unconditionally refuses before the
-`qualification-release` environment and OIDC-capable `sign` job can start.
+A separate `release_gate` job and the `sign` job both require the repository
+variable `STAGE2A_FROZEN_SOUL_SIGNING_ENABLED` to equal the exact string
+`true`. The variable is unset by default, so both jobs are skipped. Even if
+the variable is explicitly enabled later, `release_gate` unconditionally
+refuses before the `qualification-release` environment and OIDC-capable
+`sign` job can start.
 The staged signing job repeats the exact build on the same protected source
 and controlled template. It requires owner-selected SHA-256 pins for the
 Cosign v3.1.4 executable, signing configuration and trusted-root bytes;

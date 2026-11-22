@@ -174,6 +174,19 @@ class HelloReceiptTest(unittest.TestCase):
                 receipt.actions_source(self.root, env)
             git.assert_not_called()
 
+    def test_signing_workflow_is_default_off_and_still_held(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/stage2a-frozen-soul-receipt.yml").read_text()
+        prepare, rest = workflow.split("\n  release_gate:\n", 1)
+        gate, sign = rest.split("\n  sign:\n", 1)
+        flag = "if: ${{ vars.STAGE2A_FROZEN_SOUL_SIGNING_ENABLED == 'true' }}"
+        self.assertNotIn("cosign attest-blob", prepare)
+        self.assertIn(flag, gate)
+        self.assertIn(flag, sign)
+        self.assertIn("needs: release_gate", sign)
+        self.assertIn("exit 1", gate)
+        self.assertIn("cosign attest-blob", sign)
+
 
 if __name__ == "__main__":
     unittest.main()
