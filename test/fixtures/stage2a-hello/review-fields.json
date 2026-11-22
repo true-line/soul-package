@@ -1,0 +1,58 @@
+{
+  "artifact_sha256": "91492287cced24a5f893fdad4516f23f4f4162df8f449a979f35ea8b70adfe47",
+  "claimed_definition_digest": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "definition_measurement": "sha256:68651e0685e0267f343e8b500d4af764a882c4ee56f0d1b4d2c775538317a621",
+  "definition_records": [
+    {
+      "kind": "directory",
+      "mode": "0555",
+      "path": "Contents"
+    },
+    {
+      "kind": "regular",
+      "mode": "0444",
+      "path": "Contents/SoulInfo.json",
+      "sha256": "ca0c2f5a2a820d5cf1b279632ff801ccc63f5970bf0e71a2b90a22e863c9382b",
+      "size": 353
+    },
+    {
+      "kind": "regular",
+      "mode": "0444",
+      "path": "Contents/SoulLock.json",
+      "sha256": "6229477326f2a30ffac50bcc6fb4cb53cfa6cd15d1313c4a040eff7cbb15831b",
+      "size": 101
+    },
+    {
+      "kind": "directory",
+      "mode": "0555",
+      "path": "Contents/opt"
+    },
+    {
+      "kind": "regular",
+      "mode": "0444",
+      "path": "Contents/opt/quickstart-adapter.mjs",
+      "sha256": "39c64a2c5f4de00c1d130b151c0a02eb94bab1f6f2856167c247f6d6b03c3baa",
+      "size": 1602
+    },
+    {
+      "kind": "regular",
+      "mode": "0444",
+      "path": "Contents/opt/quickstart-check.mjs",
+      "sha256": "c699b5d88c7537b73ea0a02780de988c764dc524bcf7b8635150626b66dc6ef8",
+      "size": 1288
+    },
+    {
+      "kind": "directory",
+      "mode": "0555",
+      "path": "Contents/primitives"
+    },
+    {
+      "kind": "regular",
+      "mode": "0444",
+      "path": "Contents/primitives/quickstart-task.json",
+      "sha256": "2bcefe02fa455f84bc89afb614c0f03055d98c860a3f152fdf5bda5a4ef73263",
+      "size": 325
+    }
+  ],
+  "soul_id": "agent_0b3f1e2a-7c4d-4e8f-9a1b-2c3d4e5f6a7b"
+}

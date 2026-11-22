@@ -1,0 +1,202 @@
+name: Frozen Soul receipt candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Require protected main
+        run: |
+          set -eu
+          if [ "$GITHUB_REPOSITORY" != true-line/soul-package ] ||
+             [ "$GITHUB_REF" != refs/heads/main ] ||
+             [ "$GITHUB_REF_PROTECTED" != true ]; then
+            echo "::error::The frozen Soul receipt rehearsal requires protected main."
+            exit 1
+          fi
+      - name: Check out exact build source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: builder
+          persist-credentials: false
+      - name: Check out exact controlled template
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: true-line/soul-conformance
+          ref: 8e82f47781e583e4b09352cbfef5ca3bfefe45aa
+          path: template
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14.10'
+          check-latest: false
+      - name: Test, build twice and compare exact local files
+        working-directory: builder
+        run: |
+          set -eu
+          umask 077
+          python3 -m unittest discover -s test -p 'stage2a_*_test.py'
+          private_dir="$(mktemp -d "$RUNNER_TEMP/frozen-soul.XXXXXXXX")"
+          trap 'rm -rf "$private_dir"' EXIT
+          python3 tools/stage2a_hello_receipt.py prepare ../template "$private_dir/first"
+          python3 tools/stage2a_hello_receipt.py prepare ../template "$private_dir/second"
+          if ! diff -qr "$private_dir/first" "$private_dir/second" > "$private_dir/diff.log"; then
+            echo "::error::Frozen Soul build outputs differ."
+            exit 1
+          fi
+          echo "Unsigned frozen Soul artifact and Statement reproduced on the runner."
+  release_gate:
+    needs: prepare
+    if: ${{ vars.STAGE2A_FROZEN_SOUL_SIGNING_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Hold for owner signing pins and private handoff review
+        run: |
+          echo "::error::Owner-selected Fulcio/Rekor/timestamp configuration, exact trusted root, public-log disclosure, and private artifact handoff are not yet approved."
+          exit 1
+  sign:
+    needs: release_gate
+    if: ${{ vars.STAGE2A_FROZEN_SOUL_SIGNING_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    environment: qualification-release
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Check out exact build source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: builder
+          persist-credentials: false
+      - name: Check out exact controlled template
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: true-line/soul-conformance
+          ref: 8e82f47781e583e4b09352cbfef5ca3bfefe45aa
+          path: template
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14.10'
+          check-latest: false
+      - name: Install reviewed Cosign release
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
+      - name: Rebuild, sign exact Statement and verify offline
+        working-directory: builder
+        env:
+          SIGNING_CONFIG_B64: ${{ secrets.FROZEN_SOUL_SIGNING_CONFIG_B64 }}
+          TRUSTED_ROOT_B64: ${{ secrets.FROZEN_SOUL_TRUSTED_ROOT_B64 }}
+          SIGNING_CONFIG_SHA256: ${{ vars.FROZEN_SOUL_SIGNING_CONFIG_SHA256 }}
+          TRUSTED_ROOT_SHA256: ${{ vars.FROZEN_SOUL_TRUSTED_ROOT_SHA256 }}
+          COSIGN_SHA256: ${{ vars.FROZEN_SOUL_COSIGN_SHA256 }}
+          REKOR_LOG_ID: ${{ vars.FROZEN_SOUL_REKOR_LOG_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$GITHUB_REPOSITORY" = true-line/soul-package
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REF_PROTECTED" = true
+          for digest in "$SIGNING_CONFIG_SHA256" "$TRUSTED_ROOT_SHA256" "$COSIGN_SHA256"; do
+            [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Missing exact signing-material digest."; exit 1; }
+          done
+          [[ "$REKOR_LOG_ID" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Missing selected transparency log ID."; exit 1; }
+          test -n "$SIGNING_CONFIG_B64"
+          test -n "$TRUSTED_ROOT_B64"
+          cosign_path="$(command -v cosign)"
+          printf '%s  %s\n' "$COSIGN_SHA256" "$cosign_path" | sha256sum --check --status
+          private_dir="$(mktemp -d "$RUNNER_TEMP/frozen-soul-sign.XXXXXXXX")"
+          trap 'rm -rf "$private_dir"' EXIT
+          printf '%s' "$SIGNING_CONFIG_B64" | base64 --decode > "$private_dir/signing-config.json"
+          printf '%s' "$TRUSTED_ROOT_B64" | base64 --decode > "$private_dir/trusted-root.json"
+          printf '%s  %s\n' "$SIGNING_CONFIG_SHA256" "$private_dir/signing-config.json" | sha256sum --check --status
+          printf '%s  %s\n' "$TRUSTED_ROOT_SHA256" "$private_dir/trusted-root.json" | sha256sum --check --status
+          python3 -m unittest discover -s test -p 'stage2a_*_test.py'
+          python3 tools/stage2a_hello_receipt.py prepare ../template "$private_dir/first"
+          python3 tools/stage2a_hello_receipt.py prepare ../template "$private_dir/second"
+          diff -qr "$private_dir/first" "$private_dir/second" > "$private_dir/diff.log"
+          artifacts=("$private_dir/first"/sha256-*.soul)
+          test "${#artifacts[@]}" -eq 1
+          artifact="${artifacts[0]}"
+          test -f "$artifact"
+          cosign attest-blob --yes --new-bundle-format \
+            --rekor-entry-type dsse \
+            --signing-config "$private_dir/signing-config.json" \
+            --trusted-root "$private_dir/trusted-root.json" \
+            --statement "$private_dir/first/statement.json" \
+            --bundle "$private_dir/receipt.bundle.json" "$artifact"
+          python3 tools/stage2a_hello_receipt.py check-bundle \
+            "$artifact" "$private_dir/first/review-fields.json" \
+            "$private_dir/first/statement.json" "$private_dir/receipt.bundle.json" \
+            --log-kind dsse --log-version 0.0.1 --log-id "$REKOR_LOG_ID" \
+            > "$private_dir/shape.json"
+          cosign verify-blob-attestation --offline --new-bundle-format \
+            --check-claims=true --type https://true-line.ai/soul-contracts/package/v1/frozen-soul-build \
+            --trusted-root "$private_dir/trusted-root.json" \
+            --certificate-identity 'https://github.com/true-line/soul-package/.github/workflows/stage2a-frozen-soul-receipt.yml@refs/heads/main' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --bundle "$private_dir/receipt.bundle.json" "$artifact" \
+            > "$private_dir/offline-verification.txt" 2>&1
+          python3 - "$private_dir" "$artifact" <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          directory, artifact = Path(sys.argv[1]), Path(sys.argv[2])
+          statement = json.loads((directory / 'first/statement.json').read_bytes())
+          shape = json.loads((directory / 'shape.json').read_bytes())
+          builder = statement['predicate']['builder']
+          assert builder['source_commit'] == os.environ['GITHUB_SHA']
+          assert shape['status'] == 'shape-checked-only'
+
+          def file_record(path, role):
+              data = path.read_bytes()
+              assert data, f'empty release input: {role}'
+              return {'role': role, 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}
+
+          files = {
+              'artifact': file_record(artifact, 'frozen-soul-archive-v1'),
+              'statement': file_record(directory / 'first/statement.json', 'frozen-soul-statement-v1'),
+              'bundle': file_record(directory / 'receipt.bundle.json', 'frozen-soul-build-bundle-v1'),
+              'offline_verification': file_record(directory / 'offline-verification.txt', 'frozen-soul-verification-log-v1'),
+          }
+          assert files['artifact']['sha256'] == shape['artifact_sha256']
+          assert files['statement']['sha256'] == shape['statement_sha256']
+          assert files['bundle']['sha256'] == shape['bundle_sha256']
+          evidence = {
+              'kind': 'frozen-soul-producer-handoff/v1',
+              'role': 'frozen-soul-producer-handoff-v1',
+              'files': files,
+              'source_commit': builder['source_commit'],
+              'source_tree': builder['source_tree'],
+              'workflow': builder['workflow'],
+              'run_id': builder['run_id'],
+              'run_attempt': builder['run_attempt'],
+              'certificate_identity': 'https://github.com/true-line/soul-package/.github/workflows/stage2a-frozen-soul-receipt.yml@refs/heads/main',
+              'oidc_issuer': 'https://token.actions.githubusercontent.com',
+              'transparency_log_id': os.environ['REKOR_LOG_ID'],
+              'signing_config_sha256': os.environ['SIGNING_CONFIG_SHA256'],
+              'trusted_root_sha256': os.environ['TRUSTED_ROOT_SHA256'],
+              'cosign_sha256': os.environ['COSIGN_SHA256'],
+          }
+          (directory / 'producer-handoff.json').write_text(json.dumps(evidence, sort_keys=True, separators=(',', ':')))
+          PY
+          echo '::error::Private write-once handoff/read-back and owner-pinned policy verification are still held.'
+          exit 1
