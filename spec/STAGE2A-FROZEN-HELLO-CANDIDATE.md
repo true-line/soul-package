@@ -120,32 +120,56 @@ authority. This build receipt conveys provenance only.
 ### Private build rehearsal and held signing
 
 The candidate `.github/workflows/stage2a-frozen-soul-receipt.yml` runs only
-on manual dispatch against protected main. It checks the exact builder
-commit, tree and source bytes against the checkout and the exact conformance
-commit and trees. It builds and verifies twice and compares each output
-inside a private runner directory. It grants `contents: read` and has no
-OIDC token permission, credential input, signing step, artifact upload or
-release publication. Its private runner outputs are deleted when the job
-exits. The build stores the Statement and diagnostic inputs alongside the
-exact archive, without storing private bytes in logs.
+on manual dispatch against protected main. Its `prepare` job checks the exact
+builder commit, tree and source bytes against the checkout and the exact
+conformance commit and trees. It builds and verifies twice and compares each
+output inside a private runner directory. Its private runner outputs are
+deleted when the job exits. The build stores the Statement and diagnostic
+inputs alongside the exact archive, without storing private bytes in logs.
 
-A later reviewed change would add signing in an owner-protected release
-environment, with OIDC granted to that job alone and the exact source,
-workflow, builder, toolchain and template pins checked before the OIDC
-request. The owner must pin the exact Cosign binary, signing configuration
-and trusted-root bytes. For the proposed Cosign v3.1.4 `--statement` path,
-the input to the signature is the exact local Statement.
+A separate `release_gate` job unconditionally refuses before the
+`qualification-release` environment and OIDC-capable `sign` job can start.
+The staged signing job repeats the exact build on the same protected source
+and controlled template. It requires owner-selected SHA-256 pins for the
+Cosign v3.1.4 executable, signing configuration and trusted-root bytes;
+the configuration and root arrive only as private environment-scoped inputs.
+The job checks those pins before requesting a keyless signature, then compares
+the signed bundle to the exact Statement and artifact and verifies it offline
+with the selected log ID, pinned root, workflow certificate identity and OIDC issuer. Its
+post-verification stop also refuses release while private write-once handoff,
+read-back and the owner-signed v3 policy check are unavailable. The pre-sign
+hold must remain until those missing steps and owner selections are reviewed;
+removing it alone would create a public log entry and discard private outputs.
+No signing or artifact upload runs in the current candidate.
+
+The staged job writes a private `producer-handoff.json` sidecar after offline
+verification. It records exact SHA-256 and byte length for the frozen `.soul`,
+Statement, bundle and offline verifier output, plus source commit/tree,
+workflow identity, certificate identity, OIDC issuer, selected log ID and
+signing-material digests. These are producer claims for the release operator's
+ledger; the owner-pinned Machine verifier must recheck the actual files. The
+independent private release manifest must record the sidecar's own digest and
+positive byte length, avoiding a self-reference in the sidecar. No
+private object naming, scoped credential, write-once upload or independent
+read-back is selected yet, so the sidecar and files are deleted with the
+runner directory under the current hold. The existing runtime `.tgz` and
+adapter archive keep separate roles and digests.
+
+For the proposed Cosign v3.1.4 `--statement` path, the input to the signature
+is the exact local Statement. Cosign does not itself recompute the artifact
+digest in this mode; the bundle checker and offline verifier must bind the
+Statement's subject to the actual `.soul` bytes.
 [Pinned Cosign source](https://github.com/sigstore/cosign/blob/v3.1.4/cmd/cosign/cli/attest/attest_blob.go).
 
 ```sh
-cosign attest-blob --yes --new-bundle-format \
+cosign attest-blob --yes --new-bundle-format --rekor-entry-type dsse \
   --signing-config "$reviewed_signing_config" \
   --trusted-root "$reviewed_trusted_root" \
   --statement "$private_dir/statement.json" \
   --bundle "$private_dir/frozen-soul-build-receipt.bundle.json" "$artifact"
 ```
 
-This command is a review proposal. For the selected pinned configuration,
+This command is a held review proposal for `dsse/0.0.1`. For the selected pinned configuration,
 the owner approves the actual Fulcio, Rekor and timestamp inputs and log body
 disclosure before any submission. Public logs can disclose the certificate
 identity, build provenance extensions, signatures, timestamps and digest
@@ -170,7 +194,8 @@ must authenticate the receipt independently.
 python3 tools/stage2a_hello_receipt.py check-bundle \
   "$artifact" "$private_dir/review-fields.json" "$private_dir/statement.json" \
   "$private_dir/frozen-soul-build-receipt.bundle.json" \
-  --log-kind "$reviewed_log_kind" --log-version "$reviewed_log_version"
+  --log-kind "$reviewed_log_kind" --log-version "$reviewed_log_version" \
+  --log-id "$reviewed_log_id"
 ```
 
 Machine verifies the exact receipt bundle locally under owner-signed

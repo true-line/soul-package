@@ -16,6 +16,8 @@ def encoded(value):
 
 
 class HelloReceiptTest(unittest.TestCase):
+    LOG_ID = "d" * 64
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -57,6 +59,7 @@ class HelloReceiptTest(unittest.TestCase):
             "verificationMaterial": {
                 "certificate": {"rawBytes": placeholder},
                 "tlogEntries": [{
+                    "logId": {"keyId": encoded(bytes.fromhex(self.LOG_ID))},
                     "kindVersion": {"kind": "dsse", "version": "0.0.1"},
                     "inclusionProof": {"checkpoint": {"envelope": "synthetic checkpoint"}},
                     "inclusionPromise": {"signedEntryTimestamp": placeholder},
@@ -64,10 +67,10 @@ class HelloReceiptTest(unittest.TestCase):
             },
         }
 
-    def check(self, bundle=None, kind="dsse", version="0.0.1"):
+    def check(self, bundle=None, kind="dsse", version="0.0.1", log_id=LOG_ID):
         self.bundle.write_bytes(package.canonical_records(self.fixture if bundle is None else bundle))
         return receipt.check_bundle(
-            self.archive, self.fields, self.statement, self.bundle, kind, version,
+            self.archive, self.fields, self.statement, self.bundle, kind, version, log_id,
         )
 
     def test_exact_statement_and_sigstore_proto_json_shape(self):
@@ -114,7 +117,7 @@ class HelloReceiptTest(unittest.TestCase):
                 self.check()
         self.bundle.write_bytes(b'{"mediaType":"first","mediaType":"second"}')
         with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
-            receipt.check_bundle(self.archive, self.fields, self.statement, self.bundle, "dsse", "0.0.1")
+            receipt.check_bundle(self.archive, self.fields, self.statement, self.bundle, "dsse", "0.0.1", self.LOG_ID)
 
     def test_reject_artifact_byte_change(self):
         self.archive.write_bytes(b"different artifact")
@@ -152,6 +155,13 @@ class HelloReceiptTest(unittest.TestCase):
             "rfc3161Timestamps": [{"signedTimestamp": encoded(b"synthetic timestamp")}],
         }
         self.assertEqual(self.check(kind="hashedrekord", version="0.0.2")["status"], "shape-checked-only")
+
+    def test_refuse_wrong_or_missing_selected_log_id(self):
+        with self.assertRaisesRegex(ValueError, "differs from selected root"):
+            self.check(log_id="e" * 64)
+        del self.fixture["verificationMaterial"]["tlogEntries"][0]["logId"]
+        with self.assertRaisesRegex(ValueError, "wrong transparency log ID fields"):
+            self.check()
 
     def test_wrong_actions_context_stops_before_git(self):
         env = {

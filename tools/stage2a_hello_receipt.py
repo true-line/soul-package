@@ -164,8 +164,9 @@ def decode_bytes(value, label):
     return decoded
 
 
-def bundle_shape(raw, expected, log_kind, log_version):
+def bundle_shape(raw, expected, log_kind, log_version, log_id):
     require(LOG_VERSIONS.get(log_kind) == log_version, "unsupported candidate Rekor entry type")
+    require(matches(log_id, r"[0-9a-f]{64}"), "invalid selected transparency log ID")
     bundle = object_fields(package.load_json(raw), ("mediaType", "verificationMaterial", "dsseEnvelope"), "bundle")
     require(bundle["mediaType"] == BUNDLE_TYPE, "wrong bundle media type")
     envelope = object_fields(bundle["dsseEnvelope"], ("payloadType", "payload", "signatures"), "DSSE envelope")
@@ -186,6 +187,9 @@ def bundle_shape(raw, expected, log_kind, log_version):
             "expected one transparency log entry")
     entry = entries[0]
     require(entry.get("kindVersion") == {"kind": log_kind, "version": log_version}, "unexpected Rekor entry type")
+    log = object_fields(entry.get("logId"), ("keyId",), "transparency log ID")
+    require(decode_bytes(log["keyId"], "transparency log ID").hex() == log_id,
+            "transparency log ID differs from selected root")
     proof = entry.get("inclusionProof")
     require(isinstance(proof, dict) and isinstance(proof.get("checkpoint"), dict)
             and isinstance(proof["checkpoint"].get("envelope"), str) and proof["checkpoint"]["envelope"],
@@ -202,7 +206,7 @@ def bundle_shape(raw, expected, log_kind, log_version):
         decode_bytes(rfc3161[0].get("signedTimestamp"), "RFC 3161 timestamp")
 
 
-def check_bundle(artifact, review_path, expected_path, bundle_path, log_kind, log_version):
+def check_bundle(artifact, review_path, expected_path, bundle_path, log_kind, log_version, log_id):
     reviewed = package.load_json(read_bounded(review_path, MAX_STATEMENT_BYTES))
     package.verify(artifact, reviewed)
     expected = read_bounded(expected_path, MAX_STATEMENT_BYTES)
@@ -213,7 +217,7 @@ def check_bundle(artifact, review_path, expected_path, bundle_path, log_kind, lo
     require(expected == statement_bytes(reviewed, predicate["builder"], predicate["toolchain_sha256"]),
             "candidate Statement differs from the exact frozen artifact and predicate")
     bundle = read_bounded(bundle_path, MAX_BUNDLE_BYTES)
-    bundle_shape(bundle, expected, log_kind, log_version)
+    bundle_shape(bundle, expected, log_kind, log_version, log_id)
     return {
         "artifact_sha256": reviewed["artifact_sha256"],
         "bundle_sha256": package.sha256(bundle),
@@ -233,13 +237,14 @@ def main():
         check.add_argument(name, type=Path)
     check.add_argument("--log-kind", required=True)
     check.add_argument("--log-version", required=True)
+    check.add_argument("--log-id", required=True, help="selected lowercase hex transparency log ID")
     args = parser.parse_args()
     try:
         if args.command == "prepare":
             prepare(args.template_checkout, args.output_directory, os.environ)
         else:
             result = check_bundle(args.artifact, args.review_fields, args.expected_statement,
-                                  args.bundle, args.log_kind, args.log_version)
+                                  args.bundle, args.log_kind, args.log_version, args.log_id)
             print(package.canonical_records(result).decode("ascii"))
     except (KeyError, OSError, ValueError, subprocess.CalledProcessError) as err:
         parser.exit(1, f"{err}\n")
