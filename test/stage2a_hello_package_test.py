@@ -52,6 +52,26 @@ class HelloPackageTest(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             package.stage_review_copy(copy, extracted, self.reviewed["definition_records"])
 
+    def test_pinned_source_candidate_fixture_and_tampering(self):
+        fixture = Path(__file__).resolve().parent / "fixtures/stage2a-hello"
+        archive = fixture / "hello.soul"
+        reviewed = package.load_json((fixture / "review-fields.json").read_bytes())
+        self.assertEqual(archive.stat().st_size, 10_240)
+        self.assertEqual(reviewed["artifact_sha256"],
+                         "91492287cced24a5f893fdad4516f23f4f4162df8f449a979f35ea8b70adfe47")
+        self.assertEqual(reviewed["soul_id"], "agent_0b3f1e2a-7c4d-4e8f-9a1b-2c3d4e5f6a7b")
+        self.assertEqual(reviewed["definition_measurement"],
+                         "sha256:68651e0685e0267f343e8b500d4af764a882c4ee56f0d1b4d2c775538317a621")
+        self.assertEqual(set(package.verify(archive, reviewed)), set(package.FILES))
+        changed = self.root / "altered-candidate.soul"
+        raw = bytearray(archive.read_bytes())
+        raw[2 * package.BLOCK] ^= 1
+        changed.write_bytes(raw)
+        with self.assertRaises(ValueError):
+            package.verify(changed, reviewed)
+        with self.assertRaises(ValueError):
+            package.verify(archive, {**reviewed, "soul_id": "agent_ffffffff-ffff-ffff-ffff-ffffffffffff"})
+
     def test_exact_receipt_and_owner_mapping(self):
         mutations = {
             "artifact_sha256": "0" * 64,
