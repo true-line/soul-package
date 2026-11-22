@@ -208,21 +208,25 @@ digest, exact Statement provenance and receipt byte digest to the separately
 approved candidate and enforce policy expiry, revocation and the Stage 2a
 one-hour revocation freshness rule. The bundle supplies no trust root.
 
-The operator can provide those exact local files directly. If using private
-R2 for handoff, add distinct proposed roles `frozen-soul-artifact` and
-`frozen-soul-build-bundle` to a versioned manifest. They carry the exact
-`.soul` and its detached bundle, each with its own digest. Preserve the
-existing `souls-package` / `souls-package.tgz` and runtime bundle roles.
-The adapter #29 six-role index and its exact-set verifier need a coordinated
-versioned update to carry the two new roles when the release uses R2.
-The proposed index v2 has all eight roles, with logical URIs
-`qualification://stage2a/<role>/<bare-sha256>` and exact byte lengths.
-Use `sha256-<artifact-sha256>.soul` and
-`sha256-<bundle-sha256>.sigstore.json` as the new local filenames. The
-private transport lane must verify write-once/read-back and lock evidence
-under its reviewed rules. An operator can deliver the same bytes without
-the index or object store. HQ and Machine use already delivered local
-inputs for installation, launch and verification, independent of R2,
+The operator can provide the exact local files directly. The separate private
+R2 handoff proposal reserves five versioned roles:
+`frozen-soul-archive-v1`, `frozen-soul-statement-v1`,
+`frozen-soul-build-bundle-v1`, `frozen-soul-verification-log-v1`, and
+`frozen-soul-producer-handoff-v1`. Each would use a create-once
+`v1/<role>/<lowercase-sha256>` key in the locked private bucket and a
+`qualification://stage2a/<role>/<lowercase-sha256>` locator. The first four
+carry their own exact SHA-256 and positive byte length in the private sidecar;
+the independent release manifest would record the sidecar's digest and size.
+The sidecar would be uploaded last, followed by full-byte read-back through
+a distinct reader and offline verification of the downloaded bundle and
+`.soul`. This route still needs a reviewed private-fetcher contract, separate
+soul-package scoped credentials, current lock evidence and owner approval;
+the held workflow does not upload any of these files. It does not alter the
+published six-input qualification index or reuse the `souls-package` runtime
+`.tgz` role and its bundle. The builder names the archive
+`sha256-<artifact-sha256>.soul`; the held signer uses a private temporary
+bundle path until handoff is defined. HQ and Machine use already delivered
+local inputs for installation, launch and verification, independent of R2,
 Harbor and internet availability at runtime.
 
 ## Local reproduction
