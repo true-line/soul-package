@@ -1,0 +1,56 @@
+name: Frozen Soul receipt candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Require protected main
+        run: |
+          set -eu
+          if [ "$GITHUB_REPOSITORY" != true-line/soul-package ] ||
+             [ "$GITHUB_REF" != refs/heads/main ] ||
+             [ "$GITHUB_REF_PROTECTED" != true ]; then
+            echo "::error::The frozen Soul receipt rehearsal requires protected main."
+            exit 1
+          fi
+      - name: Check out exact build source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: builder
+          persist-credentials: false
+      - name: Check out exact controlled template
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: true-line/soul-conformance
+          ref: 8e82f47781e583e4b09352cbfef5ca3bfefe45aa
+          path: template
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14.10'
+          check-latest: false
+      - name: Test, build twice and compare exact local files
+        working-directory: builder
+        run: |
+          set -eu
+          umask 077
+          python3 -m unittest discover -s test -p 'stage2a_*_test.py'
+          private_dir="$(mktemp -d "$RUNNER_TEMP/frozen-soul.XXXXXXXX")"
+          trap 'rm -rf "$private_dir"' EXIT
+          python3 tools/stage2a_hello_receipt.py prepare ../template "$private_dir/first"
+          python3 tools/stage2a_hello_receipt.py prepare ../template "$private_dir/second"
+          if ! diff -qr "$private_dir/first" "$private_dir/second" > "$private_dir/diff.log"; then
+            echo "::error::Frozen Soul build outputs differ."
+            exit 1
+          fi
+          echo "Unsigned frozen Soul artifact and Statement reproduced on the runner."

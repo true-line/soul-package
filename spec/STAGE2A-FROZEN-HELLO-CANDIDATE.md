@@ -95,27 +95,93 @@ portable definition measurement as its archive SHA-256.
 
 ## Receipt and optional transport
 
-The proposed frozen Soul receipt is an in-toto Statement/v1 with one subject
-named `sha256-<artifact-sha256>.soul` and one bare SHA-256. Use a new
-dedicated predicate and versioned verifier. The subject and typed predicate
-bind the exact artifact, source template repo/commit/tree and path, exact
-builder/workflow repo/commit/tree, toolchain digest, workflow, run ID and
-attempt, and definition measurement. The existing adapter/v2 `souls-build`
-predicate and `.tgz` receipt remain the runtime provenance authority.
-This build receipt does not authorize a launch or replace host evidence.
+The proposed frozen Soul receipt is a DSSE-signed in-toto Statement/v1 with
+one subject named `sha256-<artifact-sha256>.soul` and one bare SHA-256.
+The candidate predicate type is
+`https://true-line.ai/soul-contracts/package/v1/frozen-soul-build`. The
+predicate has these exact fields.
 
-Machine verifies the exact receipt bundle locally under owner-signed policy
-with the reviewed trust-root file digest, workflow certificate identity,
-OIDC issuer, protected source and authorized builder/toolchain and template
-pins. Require the expected DSSE/in-toto format, Fulcio chain, authenticated
-signing-time evidence and signed Rekor inclusion/checkpoint anchored in that
-root. Enforce policy expiry, revocation and the Stage 2a one-hour revocation
-freshness rule. Review the precise log entry type and body for the pinned
-signing tool before public submission. Public Rekor may expose signing
-certificate identity, timestamps and hash commitments. The package, signed
-Statement/bundle and approval and host evidence remain private. The workflow
-must exclude paths, data and identifiers that the approved signing and log
-services may not receive.
+| Field | Binding |
+| --- | --- |
+| `artifact_format` | `stage2a-frozen-hello-ustar/v1`. |
+| `builder` | `repository`, `source_commit`, `source_tree`, `workflow`, `run_id`, `run_attempt` and `builder_sha256`. `builder_sha256` hashes the canonical map of builder script and workflow paths to their bare exact-file SHA-256 digests. |
+| `toolchain_sha256` | SHA-256 of the canonical build toolchain report covering the Git and Python version and executable digests and the `tarfile` module digest. |
+| `template` | `repository`, `source_commit`, `source_tree`, `path` and `template_tree`. The template pin is independent of the builder repository identity in the signing certificate. |
+| `definition_measurement` | The prefixed SHA-256 of the exact measured frozen records. |
+
+The ASCII-only Statement is emitted in RFC 8785 canonical form with no
+trailing newline. Owner approval, the claimed revision and independent
+measurements still travel through the reviewed plan. The Statement omits
+the Soul ID, installed-plan identification, inventory, workspace state,
+transport locations and owner approval. The existing adapter/v2
+`souls-build` predicate and `.tgz` receipt remain the runtime provenance
+authority. This build receipt conveys provenance only.
+
+### Private build rehearsal and held signing
+
+The candidate `.github/workflows/stage2a-frozen-soul-receipt.yml` runs only
+on manual dispatch against protected main. It checks the exact builder
+commit, tree and source bytes against the checkout and the exact conformance
+commit and trees. It builds and verifies twice and compares each output
+inside a private runner directory. It grants `contents: read` and has no
+OIDC token permission, credential input, signing step, artifact upload or
+release publication. Its private runner outputs are deleted when the job
+exits. The build stores the Statement and diagnostic inputs alongside the
+exact archive, without storing private bytes in logs.
+
+A later reviewed change would add signing in an owner-protected release
+environment, with OIDC granted to that job alone and the exact source,
+workflow, builder, toolchain and template pins checked before the OIDC
+request. The owner must pin the exact Cosign binary, signing configuration
+and trusted-root bytes. For the proposed Cosign v3.1.4 `--statement` path,
+the input to the signature is the exact local Statement.
+[Pinned Cosign source](https://github.com/sigstore/cosign/blob/v3.1.4/cmd/cosign/cli/attest/attest_blob.go).
+
+```sh
+cosign attest-blob --yes --new-bundle-format \
+  --signing-config "$reviewed_signing_config" \
+  --trusted-root "$reviewed_trusted_root" \
+  --statement "$private_dir/statement.json" \
+  --bundle "$private_dir/frozen-soul-build-receipt.bundle.json" "$artifact"
+```
+
+This command is a review proposal. For the selected pinned configuration,
+the owner approves the actual Fulcio, Rekor and timestamp inputs and log body
+disclosure before any submission. Public logs can disclose the certificate
+identity, build provenance extensions, signatures, timestamps and digest
+commitments. The exact package, Statement, bundle, approval and host
+evidence remain private. A signed entry timestamp can provide authenticated
+signing time for the applicable Rekor v1 configuration. Rekor v2 requires
+a separately verified RFC 3161 timestamp for this keyless signing path.
+The candidate does not choose a production log type, version or key.
+[Sigstore signer implementation](https://github.com/sigstore/sigstore-go/blob/v1.3.0/pkg/sign/signer.go).
+
+After an approved build signs, `check-bundle` compares a Sigstore v0.3
+bundle's top-level `dsseEnvelope` exact payload with the prepared Statement,
+and compares the Statement subject and definition measurement with the
+verified archive and review fields. The checker requires an explicitly
+selected log kind and version, one signature, leaf certificate, inclusion
+checkpoint and signing-time material. Its result is labeled
+`shape-checked-only`. It validates byte bindings and shape while Machine
+must authenticate the receipt independently.
+[Sigstore bundle wire format](https://docs.sigstore.dev/about/bundle/#dsse-bundle).
+
+```sh
+python3 tools/stage2a_hello_receipt.py check-bundle \
+  "$artifact" "$private_dir/review-fields.json" "$private_dir/statement.json" \
+  "$private_dir/frozen-soul-build-receipt.bundle.json" \
+  --log-kind "$reviewed_log_kind" --log-version "$reviewed_log_version"
+```
+
+Machine verifies the exact receipt bundle locally under owner-signed
+policy. Require the reviewed trust-root digest, certificate workflow
+identity, OIDC issuer and source repo/commit, protected source and authorized
+builder/toolchain and template pins, exact approved log ID/type/version,
+Fulcio chain and signature, authenticated signing time, and signed Rekor
+inclusion proof/checkpoint anchored in that root. Match the actual archive
+digest, exact Statement provenance and receipt byte digest to the separately
+approved candidate and enforce policy expiry, revocation and the Stage 2a
+one-hour revocation freshness rule. The bundle supplies no trust root.
 
 The operator can provide those exact local files directly. If using private
 R2 for handoff, add distinct proposed roles `frozen-soul-artifact` and
@@ -123,9 +189,14 @@ R2 for handoff, add distinct proposed roles `frozen-soul-artifact` and
 `.soul` and its detached bundle, each with its own digest. Preserve the
 existing `souls-package` / `souls-package.tgz` and runtime bundle roles.
 The adapter #29 six-role index and its exact-set verifier need a coordinated
-versioned update to carry the two new roles when the release uses R2. The
+versioned update to carry the two new roles when the release uses R2.
+The proposed index v2 has all eight roles, with logical URIs
+`qualification://stage2a/<role>/<bare-sha256>` and exact byte lengths.
+Use `sha256-<artifact-sha256>.soul` and
+`sha256-<bundle-sha256>.sigstore.json` as the new local filenames. The
 private transport lane must verify write-once/read-back and lock evidence
-under its reviewed rules. HQ and Machine use already delivered local
+under its reviewed rules. An operator can deliver the same bytes without
+the index or object store. HQ and Machine use already delivered local
 inputs for installation, launch and verification, independent of R2,
 Harbor and internet availability at runtime.
 
@@ -141,7 +212,7 @@ python3 tools/stage2a_hello_package.py build /path/to/soul-conformance repeat.so
 cmp hello.soul repeat.soul
 cmp review-fields.json repeat-fields.json
 python3 tools/stage2a_hello_package.py verify hello.soul review-fields.json --stage-review-copy readback.soul
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s test -p 'stage2a_hello_package_test.py' -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s test -p 'stage2a_*_test.py' -v
 ```
 
 The current candidate is 10,240 bytes. Its archive SHA-256 is
