@@ -169,6 +169,36 @@ cosign attest-blob --yes --new-bundle-format --rekor-entry-type dsse \
   --bundle "$private_dir/frozen-soul-build-receipt.bundle.json" "$artifact"
 ```
 
+### Exact public-good signing material proposed for owner review
+
+The following is a **candidate selection, not approval to submit to a public
+log or release a package**. It uses the published Sigstore
+[root-signing target set at commit `6f637ea189df60b5ea9ed5f454b4623bd3a7b3aa`](https://github.com/sigstore/root-signing/tree/6f637ea189df60b5ea9ed5f454b4623bd3a7b3aa/targets),
+with the legacy Rekor v1 `dsse/0.0.1` entry selected by the held workflow.
+The target files' byte lengths and SHA-256 values agree with that commit's
+signed `targets.json` metadata. This source review did not independently
+verify the TUF metadata signatures; the release operator must obtain and
+verify the approved exact files before setting the environment inputs.
+
+| Input | Exact review value |
+| --- | --- |
+| `trusted_root.json` | 6,787 bytes; SHA-256 `6494e21ea73fa7ee769f85f57d5a3e6a08725eae1e38c755fc3517c9e6bc0b66` |
+| `signing_config.v0.2.json` | 1,034 bytes; SHA-256 `9711a6d5375706957a4859af31c5866a4474f81f0544f9f4b76c9c4f4c8a539c` |
+| Fulcio | `https://fulcio.sigstore.dev`, API v1, as recorded in that signing config |
+| Rekor | `https://rekor.sigstore.dev`, API v1, `dsse/0.0.1` |
+| Rekor log ID | `c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d` (32 decoded bytes in the trusted root) |
+| Timestamp authority | `https://timestamp.sigstore.dev/api/v1/timestamp`, API v1, as recorded in that signing config |
+| Cosign | v3.1.4 Linux amd64 [release asset](https://github.com/sigstore/cosign/releases/tag/v3.1.4), SHA-256 `424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa` |
+
+The approved files would become `FROZEN_SOUL_TRUSTED_ROOT_B64` and
+`FROZEN_SOUL_SIGNING_CONFIG_B64` in the protected GitHub environment; their
+listed digests, the Cosign executable digest, and log ID would become its
+matching nonsecret variables. The owner must review the exact files and
+public disclosure before these values are used. The public log may disclose
+the repository and workflow certificate identity, source commit, signature,
+time and digest commitments. The `.soul` archive, Statement, bundle and host
+evidence require a separately selected private release handoff.
+
 This command is a held review proposal for `dsse/0.0.1`. For the selected pinned configuration,
 the owner approves the actual Fulcio, Rekor and timestamp inputs and log body
 disclosure before any submission. Public logs can disclose the certificate
