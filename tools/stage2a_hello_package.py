@@ -2,6 +2,7 @@
 """Build and check the controlled hello.soul transport candidate."""
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -29,6 +30,32 @@ SEEDS = (
     "Contents/workspaces/scratch/issue.md",
 )
 INVENTORY = tuple(sorted((*DIRECTORIES, *FILES)))
+STOCK_SOURCE_COMMIT = "068f5dd4d6f17691e66ea6cb3d126a0e40971f9a"
+STOCK_TEMPLATE = "templates/stage2a-stock-hello.soul"
+STOCK_FILES = (
+    "Contents/SoulInfo.json",
+    "Contents/SoulLock.json",
+    "Contents/opt/stock-claude.json",
+    "Contents/primitives/qualification-task.json",
+)
+
+
+@dataclass(frozen=True)
+class Profile:
+    name: str
+    source_commit: str
+    template: str
+    files: tuple[str, ...]
+    seeds: tuple[str, ...]
+
+    @property
+    def inventory(self):
+        return tuple(sorted((*DIRECTORIES, *self.files)))
+
+
+ORIGINAL = Profile("original", SOURCE_COMMIT, TEMPLATE, FILES, SEEDS)
+STOCK = Profile("stock-claude-v1", STOCK_SOURCE_COMMIT, STOCK_TEMPLATE, STOCK_FILES, ())
+PROFILES = {profile.name: profile for profile in (ORIGINAL, STOCK)}
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SOUL_ID = re.compile(r"agent_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 MAX_FILE_BYTES = 256 << 20
@@ -74,30 +101,30 @@ def git(checkout, *args):
     )
 
 
-def source_files(checkout):
-    tree = git(checkout, "ls-tree", "-rz", SOURCE_COMMIT, "--", f"{TEMPLATE}/Contents")
+def source_files(checkout, profile=ORIGINAL):
+    tree = git(checkout, "ls-tree", "-rz", profile.source_commit, "--", f"{profile.template}/Contents")
     blobs = {}
     for entry in tree.rstrip(b"\0").split(b"\0"):
         metadata, source_path = entry.decode("ascii").split("\t", 1)
         mode, kind, object_id = metadata.split()
         if kind != "blob" or mode not in {"100644", "100755"}:
             raise ValueError(f"unexpected source type or mode: {source_path}")
-        blobs[source_path.removeprefix(TEMPLATE + "/")] = (object_id, mode)
-    if set(blobs) != set(FILES) | set(SEEDS):
+        blobs[source_path.removeprefix(profile.template + "/")] = (object_id, mode)
+    if set(blobs) != set(profile.files) | set(profile.seeds):
         raise ValueError("the pinned template inventory differs from the controlled lineage")
     return {
         path: (git(checkout, "cat-file", "blob", blobs[path][0]),
                "0555" if blobs[path][1] == "100755" else "0444")
-        for path in FILES
+        for path in profile.files
     }
 
 
-def make_records(files):
+def make_records(files, profile=ORIGINAL):
     sizes = [len(data) for data, _ in files.values()]
     if any(size > MAX_FILE_BYTES for size in sizes) or sum(sizes) > MAX_TOTAL_BYTES:
         raise ValueError("definition exceeds byte limits")
     records = []
-    for path in INVENTORY:
+    for path in profile.inventory:
         if path in DIRECTORIES:
             records.append({"path": path, "kind": "directory", "mode": "0555"})
         else:
@@ -109,12 +136,12 @@ def make_records(files):
     return records
 
 
-def reviewed_archive_size(records):
-    if not isinstance(records, list) or len(records) != len(INVENTORY):
+def reviewed_archive_size(records, profile=ORIGINAL):
+    if not isinstance(records, list) or len(records) != len(profile.inventory):
         raise ValueError("definition records differ from the controlled inventory")
     total_size = 0
     padded_size = 0
-    for path, record in zip(INVENTORY, records):
+    for path, record in zip(profile.inventory, records):
         if not isinstance(record, dict) or record.get("path") != path:
             raise ValueError("definition records differ from the controlled inventory order")
         if path in DIRECTORIES:
@@ -132,7 +159,7 @@ def reviewed_archive_size(records):
         padded_size += size + (-size % BLOCK)
     if total_size > MAX_TOTAL_BYTES:
         raise ValueError("definition exceeds the aggregate byte limit")
-    return (len(INVENTORY) + 2) * BLOCK + padded_size
+    return (len(profile.inventory) + 2) * BLOCK + padded_size
 
 
 def tar_header(record):
@@ -168,10 +195,10 @@ def definition_claim(files):
     return {"soul_id": soul_id, "claimed_definition_digest": claim}
 
 
-def build(checkout, output):
-    files = source_files(checkout)
-    records = make_records(files)
-    reviewed_archive_size(records)
+def build(checkout, output, profile=ORIGINAL):
+    files = source_files(checkout, profile)
+    records = make_records(files, profile)
+    reviewed_archive_size(records, profile)
     approved_fields = definition_claim(files)
     with output.open("xb") as stream:
         write_archive(stream, files, records)
@@ -179,12 +206,15 @@ def build(checkout, output):
     with output.open("rb") as stream:
         for chunk in iter(lambda: stream.read(65536), b""):
             artifact_hash.update(chunk)
-    return {
+    result = {
         "artifact_sha256": artifact_hash.hexdigest(),
         **approved_fields,
         "definition_measurement": definition_measurement(records),
         "definition_records": records,
     }
+    if profile != ORIGINAL:
+        result["candidate_profile"] = profile.name
+    return result
 
 
 def read_archive(stream, records):
@@ -213,12 +243,14 @@ def read_archive(stream, records):
     return files, artifact_hash.hexdigest()
 
 
-def verify(artifact, reviewed):
+def verify(artifact, reviewed, profile=ORIGINAL):
     """Compare exact bytes to fields supplied by an already authenticated caller."""
     if not isinstance(reviewed, dict):
         raise ValueError("reviewed fields must be a JSON object")
+    if profile != ORIGINAL and reviewed.get("candidate_profile") != profile.name:
+        raise ValueError("reviewed fields name a different candidate profile")
     records = reviewed["definition_records"]
-    exact_size = reviewed_archive_size(records)
+    exact_size = reviewed_archive_size(records, profile)
     measured = definition_measurement(records)
     expected_digest = reviewed["artifact_sha256"]
     if not isinstance(expected_digest, str) or not SHA256.fullmatch(expected_digest):
@@ -240,7 +272,7 @@ def verify(artifact, reviewed):
     return files
 
 
-def stage_review_copy(output, files, records):
+def stage_review_copy(output, files, records, profile=ORIGINAL):
     # Local unprivileged read-back fixture. The caller supplies a trusted,
     # private parent. Machine implements privileged staging independently.
     output.mkdir(mode=0o700)
@@ -255,12 +287,12 @@ def stage_review_copy(output, files, records):
         (output / path).chmod(0o555)
 
     inventory = sorted(p.relative_to(output).as_posix() for p in output.rglob("*"))
-    if inventory != list(INVENTORY):
+    if inventory != list(profile.inventory):
         raise ValueError("staged review copy has unexpected paths")
     observed = make_records({
         path: ((output / path).read_bytes(), f"{stat.S_IMODE((output / path).stat().st_mode):04o}")
-        for path in FILES
-    })
+        for path in profile.files
+    }, profile)
     if (observed != records
             or any(stat.S_IMODE((output / path).stat().st_mode) != 0o555 for path in DIRECTORIES)):
         raise ValueError("staged review copy differs from reviewed records")
@@ -272,19 +304,22 @@ def main():
     create = commands.add_parser("build")
     create.add_argument("conformance_checkout", type=Path)
     create.add_argument("output_artifact", type=Path)
+    create.add_argument("--profile", choices=PROFILES, default=ORIGINAL.name)
     check = commands.add_parser("verify")
     check.add_argument("artifact", type=Path)
     check.add_argument("reviewed_fields", type=Path)
     check.add_argument("--stage-review-copy", type=Path)
+    check.add_argument("--profile", choices=PROFILES, default=ORIGINAL.name)
     args = parser.parse_args()
     try:
+        profile = PROFILES[args.profile]
         if args.command == "build":
-            result = build(args.conformance_checkout, args.output_artifact)
+            result = build(args.conformance_checkout, args.output_artifact, profile)
         else:
             result = load_json(args.reviewed_fields.read_bytes())
-            files = verify(args.artifact, result)
+            files = verify(args.artifact, result, profile)
             if args.stage_review_copy:
-                stage_review_copy(args.stage_review_copy, files, result["definition_records"])
+                stage_review_copy(args.stage_review_copy, files, result["definition_records"], profile)
         print(json.dumps(result, sort_keys=True, indent=2))
     except (KeyError, OSError, ValueError, subprocess.CalledProcessError) as err:
         parser.exit(1, f"{err}\n")
