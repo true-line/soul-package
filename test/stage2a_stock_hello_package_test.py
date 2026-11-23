@@ -39,6 +39,9 @@ class StockHelloPackageTest(unittest.TestCase):
             package.verify(first, reviewed)
         with self.assertRaises(ValueError):
             package.verify(first, {**reviewed, "candidate_profile": "other"}, package.STOCK)
+        with self.assertRaises(ValueError):
+            package.verify(first, {**reviewed,
+                                   "soul_id": "agent_ffffffff-ffff-ffff-ffff-ffffffffffff"}, package.STOCK)
         altered = self.root / "altered.soul"
         raw = bytearray(first.read_bytes())
         raw[2 * package.BLOCK] ^= 1
